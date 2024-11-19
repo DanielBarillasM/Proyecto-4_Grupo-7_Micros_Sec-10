@@ -1,0 +1,108 @@
+#include <Wire.h>
+#include <BH1750.h>
+#include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
+
+// Sensor BH1750
+BH1750 lightMeter;
+
+// Setup de LM35
+#define ADC_VREF_mV 3300.0
+#define ADC_RESOLUTION 1024.0
+#define PIN_LM35 A0
+#define ON_Board_LED 2
+
+// Credenciales WiFi
+const char* ssid = "CLARO1_D319E8";
+const char* password = "G68ABDRwxM";
+
+const char* host = "script.google.com";
+const int httpsPort = 443;
+
+WiFiClientSecure client;
+String GAS_ID = "AKfycbw5YamjvRcQtr-enkXW2GMQ5_uggHPMiBZNB9byXbpRpZhr7plmAPr7-kQy2ZtPLPZJ";s
+
+unsigned long lastMeasurementTime = 0; // Tiempo de la última medición
+const unsigned long measurementInterval = 2000; // Intervalo de 2 segundos
+
+void setup() {
+  // Iniciar comunicacion serial
+  Serial.begin(9600);
+
+  // InicializarBH1750
+  Wire.begin(D2, D1);
+  lightMeter.begin();
+
+  WiFi.begin(ssid, password);
+  Serial.println("");
+  pinMode(ON_Board_LED, OUTPUT);
+  digitalWrite(ON_Board_LED, HIGH);
+
+  // Esperar conexión WiFi
+  Serial.print("Conectando");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    digitalWrite(ON_Board_LED, LOW); // Parpadeo del LED durante la conexión
+    delay(250);
+    digitalWrite(ON_Board_LED, HIGH);
+    delay(250);
+  }
+  digitalWrite(ON_Board_LED, HIGH); // Apagar el LED una vez conectado
+  Serial.println("");
+  Serial.print("Conectado a: ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  client.setInsecure();
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+
+  // Revisar si ya se debe realizar la siguiente medicion
+  if (currentTime - lastMeasurementTime >= measurementInterval) {
+    lastMeasurementTime = currentTime; // Actualizacion tiempo de medicion
+
+    // Lectura temperatura e iluminacion
+    int adcVal = analogRead(PIN_LM35);
+    float milliVolt = adcVal * (ADC_VREF_mV / ADC_RESOLUTION);
+    float temperature = milliVolt / 10;
+    float lux = lightMeter.readLightLevel();
+
+    // Prints
+    Serial.print("Temp: ");
+    Serial.print(temperature);
+    Serial.print(" Light: ");
+    Serial.print(lux);
+    Serial.println(" lx");
+
+    // Mandar datos a sheets
+    sendData(temperature, lux);
+  }
+}
+
+void sendData(float temp, float ilum) {
+  String string_temp = String(temp, 2); // Temperatura a 2 decimales
+  String string_ilum = String(ilum, 2); // Iluminacion a 2 decimales
+
+  // Construccion URL del script
+  String url = "/macros/s/" + GAS_ID + "/exec?temperature=" + string_temp + "&illumination=" + string_ilum;
+
+  // HTTP Req / Response
+  Serial.println("Sending data to URL: " + url);
+
+  if (!client.connect(host, httpsPort)) {
+    Serial.println("Connection to host failed");
+    return;
+  }
+
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "Connection: close\r\n\r\n");
+
+  while (client.available()) {
+    String line = client.readStringUntil('\n');
+    Serial.println(line);
+  }
+  client.stop();
+}
